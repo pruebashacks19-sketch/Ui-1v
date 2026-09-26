@@ -1,3 +1,9 @@
+-- Z UI - Complete Roblox UI Library
+-- Version 1.1
+-- Clean library file: no loader/example block.
+-- Features: animated window, services sidebar, moving blue "|" selector,
+-- buttons, toggles, sliders, inputs, dropdowns, labels and notifications.
+
 local ZUI = {}
 ZUI.__index = ZUI
 
@@ -312,6 +318,42 @@ function ZUI:CreateWindow(options)
     return self
 end
 
+
+-- Service API wrappers
+-- Allows: Main:CreateButton(...), Main:CreateToggle(...), etc.
+local function attachServiceMethods(service, window)
+    function service:CreateSection(text)
+        return window:CreateSection(self, text)
+    end
+
+    function service:CreateLabel(options)
+        return window:CreateLabel(self, options)
+    end
+
+    function service:CreateButton(options)
+        return window:CreateButton(self, options)
+    end
+
+    function service:CreateToggle(options)
+        return window:CreateToggle(self, options)
+    end
+
+    function service:CreateSlider(options)
+        return window:CreateSlider(self, options)
+    end
+
+    function service:CreateInput(options)
+        return window:CreateInput(self, options)
+    end
+
+    function service:CreateDropdown(options)
+        return window:CreateDropdown(self, options)
+    end
+
+    return service
+end
+
+
 function ZUI:CreateService(name, icon)
     assert(self.Main, "CreateWindow must be called first.")
 
@@ -394,7 +436,7 @@ function ZUI:CreateService(name, icon)
         end)
     end
 
-    return service
+    return attachServiceMethods(service, self)
 end
 
 function ZUI:SelectService(service, instant)
@@ -658,4 +700,243 @@ function ZUI:CreateSlider(service, options)
 
     local function setFromX(x)
         local pct = math.clamp(
-            (x - bar.AbsolutePo
+            (x - bar.AbsolutePosition.X) / math.max(1, bar.AbsoluteSize.X),
+            0,
+            1
+        )
+        setValue(min + (max - min) * pct, true)
+    end
+
+    bar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = true
+            setFromX(input.Position.X)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (
+            input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch
+        ) then
+            setFromX(input.Position.X)
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+            or input.UserInputType == Enum.UserInputType.Touch then
+            dragging = false
+        end
+    end)
+
+    local object = {}
+
+    function object:Set(newValue)
+        setValue(newValue, true)
+    end
+
+    function object:Get()
+        return value
+    end
+
+    return object
+end
+
+function ZUI:CreateInput(service, options)
+    options = options or {}
+
+    local card = self:_CreateCard(service, 70)
+
+    local title = makeText(card, options.Name or "Input", 13, Theme.Text, Enum.Font.GothamMedium)
+    title.Position = UDim2.new(0, 14, 0, 7)
+    title.Size = UDim2.new(0, 160, 0, 20)
+
+    local box = Instance.new("TextBox")
+    box.Size = UDim2.new(1, -190, 0, 34)
+    box.Position = UDim2.new(1, -176, 0.5, -17)
+    box.BackgroundColor3 = Theme.Background
+    box.BorderSizePixel = 0
+    box.PlaceholderText = options.Placeholder or "Enter text..."
+    box.PlaceholderColor3 = Theme.SubText
+    box.Text = options.Default or ""
+    box.TextColor3 = Theme.Text
+    box.TextSize = 11
+    box.Font = Enum.Font.Gotham
+    box.ClearTextOnFocus = false
+    box.Parent = card
+    corner(box, 7)
+    stroke(box, Theme.Border)
+    padding(box, 10, 10, 0, 0)
+
+    box.FocusLost:Connect(function(enter)
+        if options.Callback then
+            task.spawn(options.Callback, box.Text, enter)
+        end
+    end)
+
+    local object = {}
+
+    function object:Set(text)
+        box.Text = tostring(text)
+    end
+
+    function object:Get()
+        return box.Text
+    end
+
+    return object
+end
+
+function ZUI:CreateDropdown(service, options)
+    options = options or {}
+
+    local values = options.Values or options.Options or {}
+    local selected = options.Default or values[1]
+
+    local card = self:_CreateCard(service, 58)
+
+    local title = makeText(card, options.Name or "Dropdown", 13, Theme.Text, Enum.Font.GothamMedium)
+    title.Position = UDim2.new(0, 14, 0, 7)
+    title.Size = UDim2.new(1, -220, 0, 20)
+
+    local selectedLabel = makeText(card, tostring(selected or "Select"), 11, Theme.BlueLight)
+    selectedLabel.Position = UDim2.new(1, -190, 0, 7)
+    selectedLabel.Size = UDim2.fromOffset(155, 20)
+    selectedLabel.TextXAlignment = Enum.TextXAlignment.Right
+
+    local arrow = makeText(card, "▼", 10, Theme.SubText, Enum.Font.GothamBold)
+    arrow.Position = UDim2.new(1, -30, 0, 8)
+    arrow.Size = UDim2.fromOffset(16, 18)
+    arrow.TextXAlignment = Enum.TextXAlignment.Center
+
+    local click = Instance.new("TextButton")
+    click.BackgroundTransparency = 1
+    click.Text = ""
+    click.Size = UDim2.fromScale(1, 1)
+    click.Parent = card
+
+    local open = false
+    local popup
+
+    local function closePopup()
+        open = false
+        if popup then
+            popup:Destroy()
+            popup = nil
+        end
+        arrow.Text = "▼"
+    end
+
+    local function openPopup()
+        if open then
+            closePopup()
+            return
+        end
+
+        open = true
+        arrow.Text = "▲"
+
+        local popupHeight = math.min(180, math.max(42, #values * 34 + 8))
+
+        popup = Instance.new("Frame")
+        popup.BackgroundColor3 = Theme.Panel
+        popup.BorderSizePixel = 0
+        popup.Size = UDim2.new(0, 200, 0, popupHeight)
+        popup.Position = UDim2.new(
+            0,
+            card.AbsolutePosition.X - self.Main.AbsolutePosition.X
+                + card.AbsoluteSize.X - 200,
+            0,
+            card.AbsolutePosition.Y - self.Main.AbsolutePosition.Y
+                + card.AbsoluteSize.Y + 5
+        )
+        popup.ZIndex = 50
+        popup.Parent = self.Main
+        corner(popup, 8)
+        stroke(popup, Theme.Border)
+
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.BackgroundTransparency = 1
+        scroll.BorderSizePixel = 0
+        scroll.Size = UDim2.fromScale(1, 1)
+        scroll.CanvasSize = UDim2.new(0, 0, 0, #values * 34 + 8)
+        scroll.ScrollBarThickness = 2
+        scroll.ZIndex = 50
+        scroll.Parent = popup
+        padding(scroll, 4, 4, 4, 4)
+
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 3)
+        layout.Parent = scroll
+
+        for _, item in ipairs(values) do
+            local b = Instance.new("TextButton")
+            b.Size = UDim2.new(1, 0, 0, 30)
+            b.BackgroundColor3 = Theme.Panel
+            b.BackgroundTransparency = 1
+            b.Text = tostring(item)
+            b.TextColor3 = Theme.SubText
+            b.TextSize = 11
+            b.Font = Enum.Font.Gotham
+            b.TextXAlignment = Enum.TextXAlignment.Left
+            b.AutoButtonColor = false
+            b.ZIndex = 51
+            b.Parent = scroll
+            padding(b, 10, 5, 0, 0)
+            corner(b, 5)
+
+            b.MouseEnter:Connect(function()
+                tween(b, 0.1, {
+                    BackgroundTransparency = 0,
+                    BackgroundColor3 = Theme.ElementHover,
+                    TextColor3 = Theme.Text
+                })
+            end)
+
+            b.MouseLeave:Connect(function()
+                tween(b, 0.1, {
+                    BackgroundTransparency = 1,
+                    TextColor3 = Theme.SubText
+                })
+            end)
+
+            b.MouseButton1Click:Connect(function()
+                selected = item
+                selectedLabel.Text = tostring(item)
+                closePopup()
+
+                if options.Callback then
+                    task.spawn(options.Callback, item)
+                end
+            end)
+        end
+    end
+
+    click.MouseButton1Click:Connect(openPopup)
+
+    local object = {}
+
+    function object:Set(item)
+        selected = item
+        selectedLabel.Text = tostring(item)
+        if options.Callback then
+            task.spawn(options.Callback, item)
+        end
+    end
+
+    function object:Get()
+        return selected
+    end
+
+    return object
+end
+
+function ZUI:Destroy()
+    if self.ScreenGui then
+        self.ScreenGui:Destroy()
+    end
+end
+
+return ZUI
